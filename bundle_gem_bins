@@ -254,6 +254,8 @@ optparse.parse!
 
 gb = GemBins::GemBins.new(options)
 
+options[:install] = true if ARGV[0] =~ /^inst/ if ARGV.count.positive?
+
 if options[:install]
   gb.install
 else

@@ -15,6 +15,8 @@ Run `bundle_gem_bins` to create a Binfile in the current directory. That file ca
 
 Using this script with the `--install` flag will read the Binfile and execute it line by line, adding options like version numbers, sudo, or the `--user-install` flag.
 
+You can also run with subcommands `bundle` or `install`, e.g. `bundle_gem_bins install`.
+
 ```
 Usage: bundle_gem_bins [options]
         --[no-]versions              Include version info in output (default true)
