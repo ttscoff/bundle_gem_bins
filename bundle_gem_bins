@@ -1,0 +1,261 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Creates a "bundle" file of all installed gems with executables. The resulting
+# file is an executable script that can be run standalone, or in combination
+# with this script to add options like `sudo` or `--user-install` to the `gem
+# install` commands. These options can be specified when creating the file as
+# well. A file created with `sudo` or `--user-install` commands can still be
+# overridden when running via this script and `--install`.
+
+# Created file is called `Binfile` in the current directory unless another path
+# is specified with `--file`.
+
+require 'optparse'
+require 'fileutils'
+
+VERSION = '1.0.0'
+
+module GemBins
+  # Command line prompts
+  module Prompt
+    ##
+    ## Ask a yes or no question in the terminal
+    ##
+    ## @param      question          [String] The question
+    ##                               to ask
+    ## @param      default_response  [Boolean]   default
+    ##                               response if no input
+    ##
+    ## @return     [Boolean] yes or no
+    ##
+    def self.yn(question, default_response: nil)
+      $stdin.reopen('/dev/tty')
+
+      default = if default_response.is_a?(String)
+                  default_response =~ /y/i ? true : false
+                else
+                  default_response
+                end
+
+      # if this isn't an interactive shell, answer default
+      return default unless $stdout.isatty
+
+      # clear the buffer
+      if ARGV&.length
+        ARGV.length.times do
+          ARGV.shift
+        end
+      end
+      system 'stty cbreak'
+
+      options = if default.nil?
+                  '[y/n]'
+                else
+                  "[#{default ? 'Y/n' : 'y/N'}]"
+                end
+      $stdout.syswrite "#{question.sub(/\?$/, '')} #{options}? "
+      res = $stdin.sysread 1
+      puts
+      system 'stty cooked'
+
+      res.chomp!
+      res.downcase!
+
+      return default if res.empty?
+
+      res =~ /y/i ? true : false
+    end
+  end
+
+  # String helpers
+  class ::String
+    def gem_list
+      split("\n").delete_if { |line| line.strip.empty? || line =~ /^#/ }.each_with_object([]) do |l, arr|
+        m = l.match(/^(?:sudo )?gem install (?:--user-install )?(?<gem>\S+)(?: (?:-v|--version) '(?<version>[0-9.]+)')?/)
+        arr << { gem: m['gem'], version: m['version'] }
+      end
+    end
+
+    def sudo(include_version: true)
+      gem_list.map do |gem|
+        version = include_version && gem[:version] ? " -v '#{gem[:version]}'" : ''
+        "sudo gem install #{gem[:gem]}#{version}"
+      end
+    end
+
+    def user_install(include_version: true)
+      gem_list.map do |gem|
+        version = include_version && gem[:version] ? " -v '#{gem[:version]}'" : ''
+        "gem install --user-install #{gem[:gem]}#{version}"
+      end
+    end
+
+    def normal_install(include_version: true)
+      gem_list.map do |gem|
+        version = include_version && gem[:version] ? " -v '#{gem[:version]}'" : ''
+        "gem install #{gem[:gem]}#{version}"
+      end
+    end
+  end
+
+  # Main class
+  class GemBins
+    def local_gems
+      Gem::Specification.sort_by { |g| [g.name.downcase, g.version] }.group_by(&:name)
+    end
+
+    def initialize(options = {})
+      @include_version = options[:include_version] || false
+      @user_install = options[:user_install]
+      @sudo = options[:sudo]
+      @dry_run = options[:dry_run]
+      @file = File.expand_path(options[:file])
+
+      @local_gems = local_gems.delete_if { |_, specs| specs.delete_if { |spec| spec.executables.empty? }.empty? }
+    end
+
+    def install
+      unless File.exist?(@file)
+        puts "File #{@file} not found"
+        Process.exit 1
+      end
+
+      res = Prompt.yn("Install gems from #{File.basename(@file)}", default_response: true)
+
+      Process.exit 0 unless res
+
+      puts "Installing gems from #{@file}"
+
+      contents = IO.read(@file)
+      lines = if @sudo
+                contents.sudo(include_version: @include_version)
+              elsif @user_install
+                contents.user_install(include_version: @include_version)
+              else
+                contents.normal_install(include_version: @include_version)
+              end
+
+      if @dry_run
+        puts lines.join("\n")
+        Process.exit 0
+      end
+
+      `sudo echo -n ''` if @sudo
+
+      lines.each do |cmd|
+        print cmd
+
+        output = `/bin/bash -c '#{cmd}' 2&>1`
+        result = $?.success?
+
+        if result
+          puts ' ✅'
+        else
+          puts ' 😥'
+          puts output
+        end
+      end
+    end
+
+    def generate
+      gems_with_bins = {}
+
+      @local_gems.map do |g, specs|
+        versions = specs.map { |spec| spec.version.to_s }
+        bins = specs.map(&:executables)
+        gems_with_bins[g] = { version: versions.max, bins: bins.sort.uniq }
+      end
+
+      lines = []
+
+      gems_with_bins.each do |k, v|
+        ver = @include_version ? " -v '#{v[:version]}'" : ''
+        ui = @user_install ? '--user-install ' : ''
+        sudo = @sudo ? 'sudo ' : ''
+        lines << "# Executables: #{v[:bins].join(', ')}\n#{sudo}gem install #{ui}#{k}#{ver}"
+      end
+
+      output = lines.join("\n\n")
+
+      if @dry_run
+        puts output
+      else
+        if File.exist?(@file)
+          res = Prompt.yn("#{@file} already exists, overwrite", default_response: false)
+          Process.exit 1 unless res
+        end
+
+        File.open(@file, 'w') do |f|
+          f.puts '#!/bin/bash'
+          f.puts
+          f.puts output
+        end
+
+        puts "Wrote list to #{@file}"
+
+        res = Prompt.yn('Make file executable', default_response: true)
+        if res
+          FileUtils.chmod 0o777, @file
+          puts 'Made file executable'
+        end
+      end
+    end
+  end
+end
+
+options = {
+  dry_run: false,
+  file: 'Binfile',
+  include_version: true,
+  sudo: false,
+  user_install: false
+}
+
+optparse = OptionParser.new do |opts|
+  opts.banner = "Usage: #{File.basename(__FILE__)} [options]"
+
+  opts.on('--[no-]versions', 'Include version info in output (default true)') do |opt|
+    options[:include_version] = opt
+  end
+
+  opts.on('--dry-run', 'Output to STDOUT instead of file') do
+    options[:dry_run] = true
+  end
+
+  opts.on('-s', '--sudo', 'Install gems with sudo') do
+    options[:sudo] = true
+  end
+
+  opts.on('-u', '--user-install', 'Use --user-install to install gems') do
+    options[:user_install] = true
+  end
+
+  opts.on('-f', '--file FILE', 'Output to alternative filename (default Binfile)') do |opt|
+    options[:file] = opt
+  end
+
+  opts.on('-v', '--version', 'Display version') do
+    puts "#{File.basename(__FILE__)} v#{VERSION}"
+    Process.exit 0
+  end
+
+  opts.on('--install', 'Run bundle script') do
+    options[:install] = true
+  end
+
+  opts.on('-h', '--help', 'Display this screen') do
+    puts opts
+    exit
+  end
+end
+
+optparse.parse!
+
+gb = GemBins::GemBins.new(options)
+
+if options[:install]
+  gb.install
+else
+  gb.generate
+end
