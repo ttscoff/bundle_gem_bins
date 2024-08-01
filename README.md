@@ -7,7 +7,7 @@ Created file is called `Binfile` in the current directory unless another path is
 
 ### Installation
 
-Save the script to a file to a directory in your $PATH and make it executable with `chmod a+x bundle_gem_bins`.
+Save the script to a directory in your $PATH and make it executable with `chmod a+x bundle_gem_bins`.
 
 ### Usage
 
