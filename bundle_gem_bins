@@ -146,7 +146,7 @@ module GemBins
       lines.each do |cmd|
         print cmd
 
-        output = `/bin/bash -c '#{cmd}' 2&>1`
+        output = `/bin/bash -c '#{cmd}' 2>&1`
         result = $?.success?
 
         if result
