@@ -14,7 +14,7 @@
 require 'optparse'
 require 'fileutils'
 
-VERSION = '1.0.0'
+VERSION = '1.0.2'
 
 module GemBins
   # Command line prompts
