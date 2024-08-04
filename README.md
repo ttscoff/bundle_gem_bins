@@ -1,3 +1,6 @@
+### Deprecated
+
+**This script has been superceded by [Binbundle](https://github.com/ttscoff/binbundle/), a more complete version that's easier to install and offers more features.**
 
 ### Description
 
